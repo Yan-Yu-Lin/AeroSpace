@@ -100,19 +100,28 @@ private func restoreWindowPosition(window: Window, restoreData: MacosNativeFulls
     if let savedParent = restoreData.savedParent, savedParent.isBound {
         let clampedIndex = min(restoreData.savedIndex, savedParent.children.count)
 
-        // Calculate new weight based on proportion and current sibling weights
-        // This handles the case where siblings' weights changed while window was fullscreen
+        // Restore with correct proportions by scaling sibling weights
+        // While window was fullscreen, siblings expanded to fill the space
+        // We need to shrink them back so proportions are preserved
         if let tilingParent = savedParent as? TilingContainer {
             let currentSiblingsWeight = tilingParent.children.sumOfDouble { $0.getWeight(tilingParent.orientation) }
-            // Formula: windowWeight = siblingsWeight * proportion / (1 - proportion)
-            // So that: windowWeight / (windowWeight + siblingsWeight) = proportion
-            let newWeight: Double
-            if savedProportion < 1.0 && savedProportion > 0 {
-                newWeight = currentSiblingsWeight * savedProportion / (1.0 - savedProportion)
-            } else {
-                newWeight = Double(restoreData.savedWeight)
+
+            if savedProportion < 1.0 && savedProportion > 0 && currentSiblingsWeight > 0 {
+                // Calculate what siblings' total weight should be to maintain proportion
+                // If window was 70% (proportion=0.7), siblings should be 30%
+                // targetSiblingsWeight / savedWeight = (1-proportion) / proportion
+                let targetSiblingsWeight = Double(restoreData.savedWeight) * (1.0 - savedProportion) / savedProportion
+                let scaleFactor = targetSiblingsWeight / currentSiblingsWeight
+
+                // Scale all current siblings' weights
+                for child in tilingParent.children {
+                    let oldWeight = child.getWeight(tilingParent.orientation)
+                    child.setWeight(tilingParent.orientation, oldWeight * scaleFactor)
+                }
             }
-            window.bind(to: savedParent, adaptiveWeight: newWeight, index: clampedIndex)
+
+            // Now bind window with its original saved weight
+            window.bind(to: savedParent, adaptiveWeight: restoreData.savedWeight, index: clampedIndex)
         } else {
             window.bind(to: savedParent, adaptiveWeight: restoreData.savedWeight, index: clampedIndex)
         }
@@ -150,7 +159,39 @@ private func restoreWindowPosition(window: Window, restoreData: MacosNativeFulls
         }
 
         // Container was flattened or has different layout - need to wrap sibling in new container
-        // This handles: sibling became root, or sibling is in a container with different layout
+        // Special case: sibling's parent is Workspace (sibling became root or is direct workspace child)
+        if let siblingWorkspace = siblingParent as? Workspace,
+           let siblingContainer = sibling as? TilingContainer {
+            // Sibling is now the root container - its weight equals the workspace dimension
+            // We need to use ABSOLUTE PIXEL weights, not proportions!
+            // layoutTiles adds delta = (containerSize - sumWeights) / count to each child
+            // If we use 0.7/0.3 (sum=1), delta ≈ 500 → both become 500px → 50/50
+            // Solution: use pixel weights that sum to container size, so delta = 0
+
+            // Get total size from sibling (which is now root, so its weight = workspace dimension)
+            let totalSize = siblingContainer.getWeight(savedOrientation)
+
+            // Calculate absolute pixel weights based on saved proportion
+            let windowPixelWeight = totalSize * savedProportion
+            let siblingPixelWeight = totalSize - windowPixelWeight
+
+            // Create new root container with the saved orientation/layout
+            let newRoot = TilingContainer(
+                parent: siblingWorkspace,
+                adaptiveWeight: WEIGHT_AUTO,
+                savedOrientation,
+                savedLayout,
+                index: INDEX_BIND_LAST
+            )
+
+            // Bind with absolute pixel weights
+            siblingContainer.bind(to: newRoot, adaptiveWeight: siblingPixelWeight, index: INDEX_BIND_LAST)
+            let windowIndex = windowWasOnLeft ? 0 : INDEX_BIND_LAST
+            window.bind(to: newRoot, adaptiveWeight: windowPixelWeight, index: windowIndex)
+            return
+        }
+
+        // This handles: sibling is in a container with different layout
 
         // Step 1: Get sibling's current position and weight
         // When the parent container was flattened, sibling inherited the parent's weight

@@ -82,16 +82,24 @@ struct MacosNativeFullscreenCommand: Command {
                 if let savedParent = restoreData.savedParent, savedParent.isBound {
                     let clampedIndex = min(restoreData.savedIndex, savedParent.children.count)
 
-                    // Calculate new weight based on proportion and current sibling weights
+                    // Restore with correct proportions by scaling sibling weights
                     if let tilingParent = savedParent as? TilingContainer {
                         let currentSiblingsWeight = tilingParent.children.sumOfDouble { $0.getWeight(tilingParent.orientation) }
-                        let newWeight: Double
-                        if savedProportion < 1.0 && savedProportion > 0 {
-                            newWeight = currentSiblingsWeight * savedProportion / (1.0 - savedProportion)
-                        } else {
-                            newWeight = Double(restoreData.savedWeight)
+
+                        if savedProportion < 1.0 && savedProportion > 0 && currentSiblingsWeight > 0 {
+                            // Calculate what siblings' total weight should be to maintain proportion
+                            let targetSiblingsWeight = Double(restoreData.savedWeight) * (1.0 - savedProportion) / savedProportion
+                            let scaleFactor = targetSiblingsWeight / currentSiblingsWeight
+
+                            // Scale all current siblings' weights
+                            for child in tilingParent.children {
+                                let oldWeight = child.getWeight(tilingParent.orientation)
+                                child.setWeight(tilingParent.orientation, oldWeight * scaleFactor)
+                            }
                         }
-                        window.bind(to: savedParent, adaptiveWeight: newWeight, index: clampedIndex)
+
+                        // Now bind window with its original saved weight
+                        window.bind(to: savedParent, adaptiveWeight: restoreData.savedWeight, index: clampedIndex)
                     } else {
                         window.bind(to: savedParent, adaptiveWeight: restoreData.savedWeight, index: clampedIndex)
                     }
@@ -119,6 +127,28 @@ struct MacosNativeFullscreenCommand: Command {
                             let siblingIndex = sibling.ownIndex ?? 0
                             let insertIndex = windowWasOnLeft ? siblingIndex : siblingIndex + 1
                             window.bind(to: tilingParent, adaptiveWeight: newWeight, index: insertIndex)
+                        } else if let siblingWorkspace = siblingParent as? Workspace,
+                                  let siblingContainer = sibling as? TilingContainer {
+                            // Special case: sibling's parent is Workspace (sibling became root)
+                            // Use ABSOLUTE PIXEL weights, not proportions!
+                            // Get total size from sibling (root's weight = workspace dimension)
+                            let totalSize = siblingContainer.getWeight(savedOrientation)
+                            let windowPixelWeight = totalSize * savedProportion
+                            let siblingPixelWeight = totalSize - windowPixelWeight
+
+                            // Create new root container with saved orientation/layout
+                            let newRoot = TilingContainer(
+                                parent: siblingWorkspace,
+                                adaptiveWeight: WEIGHT_AUTO,
+                                savedOrientation,
+                                savedLayout,
+                                index: INDEX_BIND_LAST
+                            )
+
+                            // Bind with absolute pixel weights
+                            siblingContainer.bind(to: newRoot, adaptiveWeight: siblingPixelWeight, index: INDEX_BIND_LAST)
+                            let windowIndex = windowWasOnLeft ? 0 : INDEX_BIND_LAST
+                            window.bind(to: newRoot, adaptiveWeight: windowPixelWeight, index: windowIndex)
                         } else {
                             // Need to wrap sibling in new container
                             // Use sibling's inherited weight (it inherited from the flattened parent)

@@ -101,79 +101,45 @@ extension TilingContainer {
         var point = point
         var virtualPoint = virtual.topLeftCorner
 
-        guard !children.isEmpty else { return }
-
-        // Calculate delta using ALL children (including fullscreen) to preserve weight proportions
         guard let delta = ((orientation == .h ? width : height) - CGFloat(children.sumOfDouble { $0.getWeight(orientation) }))
             .div(children.count) else { return }
 
-        // Adjust weights for ALL children (including fullscreen) to keep them in sync
-        for child in children {
+        let lastIndex = children.indices.last
+        for (i, child) in children.enumerated() {
             child.setWeight(orientation, child.getWeight(orientation) + delta)
-        }
-
-        // Filter visible children for positioning only
-        let visibleChildren = children.filter { child in
-            if let window = child as? Window {
-                return !window.isInMacosNativeFullscreen
-            }
-            return true
-        }
-        guard !visibleChildren.isEmpty else { return }
-
-        // Calculate scale factor: visible children share the full space
-        let visibleWeight = visibleChildren.sumOfDouble { $0.getWeight(orientation) }
-        let totalSpace = orientation == .h ? width : height
-        let scaleFactor = visibleWeight > 0 ? totalSpace / CGFloat(visibleWeight) : 1.0
-
-        let lastIndex = visibleChildren.indices.last
-        for (i, child) in visibleChildren.enumerated() {
-            let scaledWeight = CGFloat(child.getWeight(orientation)) * scaleFactor
             let rawGap = context.resolvedGaps.inner.get(orientation).toDouble()
             // Gaps. Consider 4 cases:
             // 1. Multiple children. Layout first child
             // 2. Multiple children. Layout last child
             // 3. Multiple children. Layout child in the middle
-            // 4. Single child
+            // 4. Single child   let rawGap = gaps.inner.get(orientation).toDouble()
             let gap = rawGap - (i == 0 ? rawGap / 2 : 0) - (i == lastIndex ? rawGap / 2 : 0)
             try await child.layoutRecursive(
                 i == 0 ? point : point.addingOffset(orientation, rawGap / 2),
-                width: orientation == .h ? scaledWeight - gap : width,
-                height: orientation == .v ? scaledWeight - gap : height,
+                width: orientation == .h ? child.hWeight - gap : width,
+                height: orientation == .v ? child.vWeight - gap : height,
                 virtual: Rect(
                     topLeftX: virtualPoint.x,
                     topLeftY: virtualPoint.y,
-                    width: orientation == .h ? scaledWeight : width,
-                    height: orientation == .v ? scaledWeight : height,
+                    width: orientation == .h ? child.hWeight : width,
+                    height: orientation == .v ? child.vWeight : height,
                 ),
                 context,
             )
-            virtualPoint = orientation == .h ? virtualPoint.addingXOffset(scaledWeight) : virtualPoint.addingYOffset(scaledWeight)
-            point = orientation == .h ? point.addingXOffset(scaledWeight) : point.addingYOffset(scaledWeight)
+            virtualPoint = orientation == .h ? virtualPoint.addingXOffset(child.hWeight) : virtualPoint.addingYOffset(child.vWeight)
+            point = orientation == .h ? point.addingXOffset(child.hWeight) : point.addingYOffset(child.vWeight)
         }
     }
 
     @MainActor
     fileprivate func layoutAccordion(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) async throws {
-        // Filter out windows that are in macOS native fullscreen
-        let visibleChildren = children.filter { child in
-            if let window = child as? Window {
-                return !window.isInMacosNativeFullscreen
-            }
-            return true
-        }
-        guard !visibleChildren.isEmpty else { return }
-
-        // Find mruIndex within visibleChildren
-        let mruChild = mostRecentChild
-        guard let mruIndex: Int = mruChild.flatMap({ child in visibleChildren.firstIndex(of: child) }) ?? visibleChildren.indices.first else { return }
-
-        for (index, child) in visibleChildren.enumerated() {
+        guard let mruIndex: Int = mostRecentChild?.ownIndex else { return }
+        for (index, child) in children.enumerated() {
             let padding = CGFloat(config.accordionPadding)
             let (lPadding, rPadding): (CGFloat, CGFloat) = switch index {
-                case 0 where visibleChildren.count == 1: (0, 0)
+                case 0 where children.count == 1: (0, 0)
                 case 0:                           (0, padding)
-                case visibleChildren.indices.last:       (padding, 0)
+                case children.indices.last:       (padding, 0)
                 case mruIndex - 1:                (0, 2 * padding)
                 case mruIndex + 1:                (2 * padding, 0)
                 default:                          (padding, padding)

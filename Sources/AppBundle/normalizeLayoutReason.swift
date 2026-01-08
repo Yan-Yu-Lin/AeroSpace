@@ -103,20 +103,23 @@ private func restoreWindowPosition(window: Window, restoreData: MacosNativeFulls
         // Restore with correct proportions by scaling sibling weights
         // While window was fullscreen, siblings expanded to fill the space
         // We need to shrink them back so proportions are preserved
+        // NOTE: Only do this for 'tiles' layout - accordion doesn't use weights for sizing
         if let tilingParent = savedParent as? TilingContainer {
-            let currentSiblingsWeight = tilingParent.children.sumOfDouble { $0.getWeight(tilingParent.orientation) }
+            if tilingParent.layout == .tiles {
+                let currentSiblingsWeight = tilingParent.children.sumOfDouble { $0.getWeight(tilingParent.orientation) }
 
-            if savedProportion < 1.0 && savedProportion > 0 && currentSiblingsWeight > 0 {
-                // Calculate what siblings' total weight should be to maintain proportion
-                // If window was 70% (proportion=0.7), siblings should be 30%
-                // targetSiblingsWeight / savedWeight = (1-proportion) / proportion
-                let targetSiblingsWeight = Double(restoreData.savedWeight) * (1.0 - savedProportion) / savedProportion
-                let scaleFactor = targetSiblingsWeight / currentSiblingsWeight
+                if savedProportion < 1.0 && savedProportion > 0 && currentSiblingsWeight > 0 {
+                    // Calculate what siblings' total weight should be to maintain proportion
+                    // If window was 70% (proportion=0.7), siblings should be 30%
+                    // targetSiblingsWeight / savedWeight = (1-proportion) / proportion
+                    let targetSiblingsWeight = Double(restoreData.savedWeight) * (1.0 - savedProportion) / savedProportion
+                    let scaleFactor = targetSiblingsWeight / currentSiblingsWeight
 
-                // Scale all current siblings' weights
-                for child in tilingParent.children {
-                    let oldWeight = child.getWeight(tilingParent.orientation)
-                    child.setWeight(tilingParent.orientation, oldWeight * scaleFactor)
+                    // Scale all current siblings' weights
+                    for child in tilingParent.children {
+                        let oldWeight = child.getWeight(tilingParent.orientation)
+                        child.setWeight(tilingParent.orientation, oldWeight * scaleFactor)
+                    }
                 }
             }
 

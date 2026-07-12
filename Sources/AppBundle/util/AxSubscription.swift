@@ -29,7 +29,8 @@ final class AxSubscription {
         var visitedNotifKeys: Set<String> = []
         for (handler, notifKeys) in handlerToNotifKeyMapping {
             try job.checkCancellation()
-            guard let obs = AXObserver.new(nsApp.processIdentifier, handler) else { return [] }
+            // Use task-local pid instead of nsApp.processIdentifier to avoid expensive IPC
+            guard let obs = AXObserver.new(axTaskLocalAppThreadToken!.pid, handler) else { return [] }
             let subscription = AxSubscription(obs: obs, ax: ax)
             for key: String in notifKeys {
                 try job.checkCancellation()

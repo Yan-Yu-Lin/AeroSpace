@@ -58,9 +58,13 @@ final class MacApp: AbstractApp {
             let wip = AwaitableOneTimeBroadcastLatch()
             wipPids[pid] = wip
 
+            // Cache idForDebug ONCE here to avoid repeated expensive IPC calls
+            // NSRunningApplication.processIdentifier triggers -[NSRunningApplication _fetchDynamicProperties]
+            let cachedIdForDebug = nsApp.idForDebug
+
             let thread = Thread {
-                $axTaskLocalAppThreadToken.withValue(AxAppThreadToken(pid: pid, idForDebug: nsApp.idForDebug)) {
-                    let axApp = AXUIElementCreateApplication(nsApp.processIdentifier)
+                $axTaskLocalAppThreadToken.withValue(AxAppThreadToken(pid: pid, idForDebug: cachedIdForDebug)) {
+                    let axApp = AXUIElementCreateApplication(pid)  // Use cached pid
                     let handlers: HandlerToNotifKeyMapping = [
                         (refreshObs, [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification]),
                     ]
@@ -78,7 +82,7 @@ final class MacApp: AbstractApp {
                     }
                 }
             }
-            thread.name = "AxAppThread \(nsApp.idForDebug)"
+            thread.name = "AxAppThread \(cachedIdForDebug)"
             thread.start()
         }
     }
